@@ -33,7 +33,9 @@ logger = logging.getLogger("order.service")
 
 # Transições de status permitidas via PATCH manual
 ALLOWED_MANUAL_TRANSITIONS = {
-    "PAGO": ["FINALIZADO"],
+    "CRIADO":               ["AGUARDANDO_PAGAMENTO", "CANCELADO"],
+    "AGUARDANDO_PAGAMENTO": ["CANCELADO"],
+    "PAGO":                 ["FINALIZADO"],
 }
 
 
@@ -72,12 +74,16 @@ class OrderService:
         order = Order(
             cliente_id=data.cliente_id,
             valor_total=total,
-            status="AGUARDANDO_PAGAMENTO",
+            status="CRIADO",
             itens=itens_db,
         )
         self.repo.create(order)
+        logger.info(f"[Order] Pedido {order.id} criado | total=R${total} | status=CRIADO")
 
-        logger.info(f"[Order] Pedido {order.id} criado | total=R${total} | status=AGUARDANDO_PAGAMENTO")
+        # Transição imediata CRIADO → AGUARDANDO_PAGAMENTO antes de disparar o evento
+        order.status = "AGUARDANDO_PAGAMENTO"
+        self.repo.save(order)
+        logger.info(f"[Order] Pedido {order.id} → AGUARDANDO_PAGAMENTO")
 
         event_bus.publish("order.created", {
             "order_id": order.id,
@@ -109,6 +115,52 @@ class OrderService:
         if new_status == "FINALIZADO":
             event_bus.publish("order.finalized", {"order_id": order_id})
 
+        return order
+
+    def cancel_order(self, order_id: int) -> Order:
+        """
+        DELETE /orders/{id} — cancela o pedido manualmente.
+        Só é permitido para pedidos ainda não pagos.
+        Estorna estoque e publica evento de cancelamento.
+        """
+        order = self.get_order(order_id)
+        if order.status in ("PAGO", "FINALIZADO", "CANCELADO"):
+            from exceptions import TransicaoDeStatusInvalida
+            raise TransicaoDeStatusInvalida(order.status, "CANCELADO")
+
+        for item in order.itens:
+            self.inventory_svc.release(item.produto_id, item.quantidade)
+
+        order.status = "CANCELADO"
+        self.repo.save(order)
+        logger.info(f"[Order] Pedido {order_id} cancelado manualmente")
+        event_bus.publish("order.cancelled", {
+            "order_id": order_id,
+            "motivo": "cancelado pelo cliente",
+        })
+        return order
+
+    def update_order(self, order_id: int, data: "OrderUpdateIn") -> Order:
+        """
+        PUT /orders/{id} — atualiza forma de pagamento enquanto pedido não foi pago.
+        """
+        from .schemas import OrderUpdateIn
+        order = self.get_order(order_id)
+        if order.status not in ("CRIADO", "AGUARDANDO_PAGAMENTO"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Pedido já processado não pode ser alterado")
+        if data.forma_pagamento:
+            # Atualiza no pagamento pendente se existir
+            from database import SessionLocal
+            from modules.payments.repository import PaymentRepository
+            db2 = SessionLocal()
+            try:
+                pay = PaymentRepository(db2).get_by_order(order_id)
+                if pay:
+                    pay.forma_pagamento = data.forma_pagamento
+                    PaymentRepository(db2).save(pay)
+            finally:
+                db2.close()
         return order
 
     def _validate_client(self, cliente_id: int) -> None:

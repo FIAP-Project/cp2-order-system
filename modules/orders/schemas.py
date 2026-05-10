@@ -52,3 +52,8 @@ class OrderOut(BaseModel):
     itens: list[OrderItemOut] = []
 
     model_config = {"from_attributes": True}
+
+
+class OrderUpdateIn(BaseModel):
+    forma_pagamento: Optional[str] = None
+

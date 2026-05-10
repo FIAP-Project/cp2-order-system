@@ -131,10 +131,12 @@ POST /orders
 ### Orders
 | Método | Rota | Status | Descrição |
 |--------|------|--------|-----------|
-| `POST` | `/orders/` | 201 / 400 / 404 / 409 | Cria pedido e dispara fluxo |
+| `POST` | `/orders/` | 201 / 400 / 404 / 409 | Cria pedido (CRIADO → AGUARDANDO_PAGAMENTO) |
 | `GET` | `/orders/` | 200 | Lista todos os pedidos |
 | `GET` | `/orders/{id}` | 200 / 404 | Consulta pedido por ID |
-| `PATCH` | `/orders/{id}/status` | 200 / 400 / 404 | Avança status (PAGO → FINALIZADO) |
+| `PUT` | `/orders/{id}` | 200 / 400 / 404 | Atualiza pedido não processado |
+| `PATCH` | `/orders/{id}/status` | 200 / 400 / 404 | Avança status manualmente |
+| `DELETE` | `/orders/{id}` | 200 / 400 / 404 | Cancela pedido e estorna estoque |
 
 ### Products
 | Método | Rota | Status | Descrição |
@@ -172,7 +174,7 @@ POST /orders
 - Pedido não pode ser criado sem itens
 - Produto deve existir no catálogo
 - Estoque é verificado e reservado antes de confirmar o pedido
-- Fluxo de status: `AGUARDANDO_PAGAMENTO → PAGO → FINALIZADO` ou `→ CANCELADO`
+- Fluxo de status: `CRIADO → AGUARDANDO_PAGAMENTO → PAGO → FINALIZADO` ou `→ CANCELADO`
 - Se pagamento for recusado, estoque é estornado automaticamente
 - Pedido avança para PAGO apenas se pagamento for aprovado
 - Transições de status inválidas retornam 400 com motivo
